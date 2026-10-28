@@ -4,6 +4,15 @@
 # Callers set STACK_DIR (the checkout holding docker-compose.yml and .env)
 # before sourcing. Tests point it at a temporary directory.
 
+# The shared network every stack joins, and its subnet. FIXED, not a setting:
+# staging nginx (set_real_ip_from) and the pipeline orchestrator
+# (BVP_TRUSTED_PROXY_CIDRS) trust exactly this range as their proxy (Caddy).
+# Changing it means changing all three stacks together. README §2.3.
+# shellcheck disable=SC2034  # used by the scripts that source this file
+EDGE_NETWORK=baja-edge
+# shellcheck disable=SC2034
+EDGE_SUBNET=10.201.0.0/24
+
 # Prefix every line with the calling script's name, so journald output from
 # the backup timer reads clearly.
 log() {

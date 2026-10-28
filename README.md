@@ -14,9 +14,11 @@ Copy-paste runbook. You run every command yourself, as root on the VPS
 
 | File | What it is |
 | --- | --- |
-| `docker-compose.yml` | Caddy, Evolution API v2.3.7, its Postgres and Redis |
+| `docker-compose.yml` | Caddy (custom build), Evolution API v2.3.7, its Postgres and Redis |
+| `caddy/Dockerfile` | Caddy 2.11.7 + `caddy-dns/cloudflare` v0.2.4 (DNS-01 for staging) |
+| `caddy/cloudflare-ips.env` | Cloudflare's IP ranges: `trusted_proxies` and the staging gate. `caddy/refresh-cloudflare-ips.sh` refreshes it (§5.3) |
 | `Caddyfile` | Global options, shared snippets, `import /srv/caddy/conf.d/*.caddy`, the tailnet-only Evolution site |
-| `conf.d/staging.caddy` | Scoring staging vhosts → `baja-nginx:80` (installed by `setup.sh --enable-staging`) |
+| `conf.d/staging.caddy` | Scoring staging vhosts, Cloudflare-only → `baja-nginx:80` (installed by `setup.sh --enable-staging`) |
 | `.env.example` | Every variable, with comments. Copy to `.env` |
 | `setup.sh` | Creates `baja-edge`, the directories, fixes `.env` permissions; switches the staging vhosts |
 | `backup.sh`, `systemd/` | Daily Evolution backup, 14-day retention |
@@ -26,13 +28,13 @@ Copy-paste runbook. You run every command yourself, as root on the VPS
 | `tests/` | Script tests (`python3 -m unittest discover -s tests`) |
 
 ```
-     internet (via Cloudflare)                             tailnet (100.x)
-            │ 80/443                                    :8081 │   │ :8080
-   ┌────────▼───────────────────── VPS ───────────────────────▼───▼────┐
+  Cloudflare (orange) │  internet (grey)                   tailnet (100.x)
+            │ 80/443   │                                :8081 │   │ :8080
+   ┌────────▼──────────▼────────── VPS ───────────────────────▼───▼────┐
    │  caddy  (only container with published ports)                     │
-   │   ├─ conf.d/staging.caddy  {BAJA_DOMAIN} + 6 subdomains,          │
-   │   │                        {FORMULA_DOMAIN} ──────► baja-nginx:80 │
-   │   ├─ conf.d/<pipeline>.caddy  (public site + :8080) ─► orchestrator│
+   │   ├─ conf.d/staging.caddy  {BAJA_DOMAIN} + 7 subdomains,          │
+   │   │   Cloudflare-only      {FORMULA_DOMAIN} ──────► baja-nginx:80 │
+   │   ├─ conf.d/<pipeline>.caddy  (open; + :8080) ───► orchestrator   │
    │   └─ http://:8081 (TAILSCALE_IP only) ───────────► evolution:8080 │
    │                                                       │           │
    │  ════════════════ baja-edge (external network) ═══════╪═════════  │
@@ -47,7 +49,7 @@ Copy-paste runbook. You run every command yourself, as root on the VPS
 
 | Thing | Value |
 | --- | --- |
-| Shared Docker network | `baja-edge`, external, created by `setup.sh` (subnet `BAJA_EDGE_SUBNET`, default `10.203.0.0/24`) |
+| Shared Docker network | `baja-edge`, external, created by `setup.sh`, subnet **`10.201.0.0/24`, fixed** (§2.3). All three stacks depend on it |
 | Caddy container | `caddy`. Publishes host 80, 443, 443/udp; `TAILSCALE_IP:8080` and `TAILSCALE_IP:8081` |
 | Site files | `/srv/caddy/conf.d/*.caddy`, one per stack |
 | Evolution | service `evolution`, port 8080, on `baja-edge` (not published) |
@@ -71,10 +73,16 @@ Copy-paste runbook. You run every command yourself, as root on the VPS
   `baja_caddy_data`, `baja_caddy_config`), under a new project name
   `baja-base`. A VPS that ran the old stack keeps its session and
   certificates (§4.10).
-* **Caddy always sets the client IP.** It trusts Cloudflare's ranges for
-  `CF-Connecting-IP` and sends the result upstream in that same header, so
-  nginx's existing real-IP config keeps working once it trusts `baja-edge`
-  (§5.2).
+* **Staging is Cloudflare-only; the pipeline is open.** The staging
+  hostnames are Cloudflare-proxied: Caddy accepts them only from Cloudflare's
+  ranges (403 for anyone else), passes `CF-Connecting-IP` through unchanged,
+  and gets their certificates with DNS-01 through the Cloudflare API (§5.3).
+  The pipeline's hostnames are DNS-only (grey), open to everyone, and use
+  ordinary HTTP-01 (§6).
+* **`baja-edge` is `10.201.0.0/24`, always.** Staging nginx trusts that range
+  for `CF-Connecting-IP`, and the pipeline orchestrator trusts it for
+  `X-Forwarded-For`. Both treat it as "the proxy", so it never changes on
+  one stack alone.
 
 ---
 
@@ -189,9 +197,23 @@ docker compose config -q
 
 It creates (and on re-runs only checks):
 
-* the `baja-edge` network with subnet `BAJA_EDGE_SUBNET`. If the network
-  already exists with another subnet it warns and leaves it alone
-  (recreating it would detach every running stack);
+* the `baja-edge` network with subnet **`10.201.0.0/24`**. The subnet is fixed,
+  not an `.env` setting, because all three stacks depend on it:
+  * staging nginx: `set_real_ip_from 10.201.0.0/24` (§5.2);
+  * the pipeline orchestrator: `BVP_TRUSTED_PROXY_CIDRS` includes
+    `10.201.0.0/24` (pipeline repo, `infra/vps/README.md` §9). Its own
+    `pipeline` network is `10.202.0.0/24`;
+  * this stack: Caddy's address on it is what both of them trust.
+
+  Before creating it, `setup.sh` checks `ip -4 route show table all` and
+  every Docker network's subnets, and **refuses** if anything overlaps
+  `10.201.0.0/24` (it names the clash). Free that range (remove the Docker
+  network, or the VPN/route using it); moving `baja-edge` instead would mean
+  changing all three stacks together. If `baja-edge` already exists with
+  another subnet, it refuses too and leaves it alone (recreating it would
+  detach every running stack; §11 has the maintenance-window procedure).
+  An old `.env` that still sets `BAJA_EDGE_SUBNET` to anything else is
+  refused; delete that line;
 * `/srv/caddy/conf.d` (root, 755);
 * `/srv/pipeline`, **only if missing**, empty and root-owned, so Caddy's
   read-only mount has a target off-season. The pipeline's own install takes
@@ -204,9 +226,23 @@ It creates (and on re-runs only checks):
 ## 3. Bring up the stack
 
 ```bash
-docker compose pull
+docker compose pull --ignore-buildable
+docker compose build caddy        # caddy/Dockerfile: Caddy + Cloudflare DNS plugin
 docker compose up -d caddy
 docker compose logs caddy | grep -iE 'error|certificate obtained'
+```
+
+Caddy is built here, not pulled: the staging certificates need the
+`caddy-dns/cloudflare` plugin (§5.3). The image is tagged
+`baja-caddy:2.11.7-cf0.2.4`; both versions are pinned in `caddy/Dockerfile`.
+To upgrade, bump them there and the tag in `docker-compose.yml`, then
+`docker compose build caddy && docker compose up -d caddy`.
+
+Validate the whole config (this file + every conf.d file) with the built
+image at any time:
+
+```bash
+docker exec caddy caddy validate --config /etc/caddy/Caddyfile
 ```
 
 Then, depending on where Evolution's data comes from:
@@ -580,12 +616,20 @@ starts the new one.
 ## 5. Scoring staging vhosts
 
 `conf.d/staging.caddy` serves every hostname the scoring repo's nginx
-templates define, and proxies them to `baja-nginx:80`:
+templates define (`server_name` in `baja-infra/nginx/templates/`), plus
+`www.`, and proxies them to `baja-nginx:80`:
 
-`BAJA_DOMAIN`, `api.`, `certificado.`, `fila.`, `juiz.`, `resultados.`,
-`forum.` + `BAJA_DOMAIN`, and `FORMULA_DOMAIN` (a whole hostname).
+`BAJA_DOMAIN`, `www.`, `api.`, `certificado.`, `fila.`, `juiz.`,
+`resultados.`, `forum.` + `BAJA_DOMAIN`, and `FORMULA_DOMAIN` (a whole
+hostname). Nine in all.
 
-Caddy terminates TLS; nginx sees plain HTTP. If `baja-nginx` is down, those
+`www.` has no `server_name` of its own in the templates (it appears only in
+`API_CORS_ORIGINS`), so nginx answers it from its default server, the root
+vhost. If it should redirect to the apex instead, that belongs in the scoring
+repo's templates.
+
+All nine are **Cloudflare-proxied and Cloudflare-only** (§5.3). Caddy
+terminates TLS; nginx sees plain HTTP. If `baja-nginx` is down, those
 hostnames answer 502. That is accepted: nothing here depends on staging.
 
 ### 5.1 What the staging stack must change first
@@ -625,19 +669,31 @@ Caddy's address on `baja-edge`, so today it would ignore the header and see
 **Caddy's IP for every visitor**: the API rate limiter would share one bucket
 between everyone, and logs/bans would be useless.
 
-What Caddy sends: it trusts Cloudflare's ranges (`trusted_proxies` in the
-`Caddyfile`, the same list as nginx's) and computes the real client:
-`CF-Connecting-IP` when the request came through Cloudflare, otherwise the
-TCP peer. It always **overwrites** `CF-Connecting-IP` (and `X-Real-IP`) with
-that value, so a client can't choose its own address, and also sets
-`X-Forwarded-For` and `X-Forwarded-Proto: https`. `Host` is passed unchanged.
+What Caddy sends. Only Cloudflare can reach the proxy (the gate, §5.3), and
+Caddy trusts Cloudflare's ranges (`trusted_proxies`), so `{client_ip}` is
+the visitor. All of this is Caddy's default `reverse_proxy` behaviour;
+`staging.caddy` only adds `X-Real-IP`:
+
+| Header | What nginx gets |
+| --- | --- |
+| `Host` | unchanged |
+| `CF-Connecting-IP` | **passed through unchanged**, as Cloudflare set it (the visitor). Nothing rewrites it |
+| `X-Forwarded-For` | the full chain: Cloudflare's value with the Cloudflare edge address appended |
+| `X-Forwarded-Proto` | Cloudflare's value (`https`) |
+| `X-Real-IP` | overwritten with `{client_ip}`, so a client-sent value never arrives |
+
+Verified locally with a Docker network inside a Cloudflare range: a request
+from `173.245.48.10` with `CF-Connecting-IP: 198.51.100.7` reached the
+upstream with that header unchanged, `X-Forwarded-For: 198.51.100.7,
+173.245.48.10`, `X-Forwarded-Proto: https`. `./smoke.sh` checks on the box
+that the header arrives (§10).
 
 What nginx needs: one more line in `00-cloudflare-realip.conf.template`,
 next to the Cloudflare ranges:
 
 ```nginx
-# Caddy on the staging VPS (baja-edge network, BAJA_EDGE_SUBNET).
-set_real_ip_from 10.203.0.0/24;
+# Caddy on the staging VPS (baja-edge, fixed subnet; base stack README §2.3).
+set_real_ip_from 10.201.0.0/24;
 ```
 
 Nothing else changes there: same header, and the Cloudflare ranges stay
@@ -648,28 +704,66 @@ for production. This is why `baja-edge` has a fixed subnet.
 **What I found** (public DNS, 2026-10-27): `bajasaebrasil.com.br` uses
 Cloudflare nameservers, and the apex and `resultados.` resolve to Cloudflare
 anycast addresses. So staging is **proxied by Cloudflare** ("orange cloud").
-I assumed every staging hostname, including `FORMULA_DOMAIN`, is proxied.
-The headers above work either way: from a non-Cloudflare peer Caddy uses
-the TCP address.
+Every staging hostname, including `FORMULA_DOMAIN`, is treated as proxied.
+
+**The gate.** On the staging vhosts only, a `remote_ip` matcher accepts
+connections whose TCP peer is in Cloudflare's ranges; everything else gets
+`403 Forbidden`, whatever headers it sends. `remote_ip` is the real peer,
+not the header-derived client IP, so it can't be spoofed. Port 80 is
+Caddy's automatic redirect to HTTPS for everyone; the gate applies on 443,
+where the redirect leads.
+
+**The ranges** are one list, `caddy/cloudflare-ips.env`
+(`CLOUDFLARE_IPS=…`), loaded into the Caddy container and used both by the
+gate and by the global `trusted_proxies`, so the two can't drift apart.
+It's a static list on purpose. The `caddy-cloudflare-ip` module (which
+fetches the ranges) is unmaintained: last commit 2023-11, built against
+Caddy 2.6, no releases. And a `remote_ip` matcher can only take a static
+list anyway. If the list is ever empty the gate matches nothing and every
+staging request gets 403 (fails closed).
+
+**Refreshing the ranges** (Cloudflare changes them rarely; check every few
+months, and whenever `./smoke.sh` shows 403 via Cloudflare):
+
+```bash
+./caddy/refresh-cloudflare-ips.sh   # fetches ips-v4/ips-v6, validates, rewrites the file
+```
+
+If it says `RANGES CHANGED`:
+
+1. `docker compose up -d caddy` (env changes need a recreate, not a reload),
+   then `./smoke.sh`.
+2. Commit `caddy/cloudflare-ips.env`.
+3. Make the same change to `set_real_ip_from` in the scoring repo's
+   `00-cloudflare-realip.conf.template` (production nginx uses that list).
+
+**Certificates: DNS-01.** HTTP-01 doesn't work reliably behind the proxy, so
+the staging vhosts use the DNS-01 challenge through the Cloudflare API
+(`tls { dns cloudflare … }` in `staging.caddy`; that's why Caddy is a custom
+build, §3). Only these vhosts do: the global options set no `acme_dns`, and
+the pipeline's hostnames keep ordinary HTTP-01.
 
 What that needs, in the Cloudflare dashboard (owner):
 
-* DNS: one proxied record per hostname above → the VPS's public IP.
-* SSL/TLS mode **Full (strict)**. Caddy has real Let's Encrypt
-  certificates. *Flexible* would make Cloudflare speak HTTP to the origin,
-  and Caddy would redirect it to HTTPS forever.
-* Certificates: Caddy gets them with the HTTP-01 challenge on port 80,
-  through the Cloudflare proxy. If issuance fails (Caddy logs show
-  `challenge failed`, or Cloudflare shows 526), make sure no Cloudflare
-  redirect rule forces HTTPS on `/.well-known/acme-challenge/*`, or briefly
-  switch the record to DNS-only for the first issuance.
+* DNS: one **proxied** (orange) record per staging hostname above → the
+  VPS's public IP. `www.` too, or drop it from `staging.caddy` and
+  `smoke.sh`.
+* SSL/TLS mode **Full (strict)** for both zones (`BAJA_DOMAIN`'s and
+  `FORMULA_DOMAIN`'s). Caddy has real Let's Encrypt certificates. *Flexible*
+  would make Cloudflare speak HTTP to the origin, and Caddy would redirect it
+  to HTTPS forever.
+* An API token for Caddy: My Profile → API Tokens → Create Token → Custom,
+  permissions **Zone / DNS / Edit** and **Zone / Zone / Read**, zone
+  resources limited to the two zones. Put it in `.env` as
+  `CLOUDFLARE_API_TOKEN`. Caddy reads it at runtime (`{env.…}`), so it never
+  appears in the config the admin API serves.
 * The results-page cache rule (`baja_staff` cookie) is unchanged; it lives
   at Cloudflare and nginx as before.
 
 ### 5.4 Enable
 
-After §5.1–§5.3 and with `BAJA_DOMAIN`/`FORMULA_DOMAIN` filled in `.env`
-(the same values as the staging stack's `.env`):
+After §5.1–§5.3, with `BAJA_DOMAIN`/`FORMULA_DOMAIN` filled in `.env` (the
+same values as the staging stack's `.env`) and `CLOUDFLARE_API_TOKEN` set:
 
 ```bash
 ./setup.sh --enable-staging
@@ -677,11 +771,15 @@ After §5.1–§5.3 and with `BAJA_DOMAIN`/`FORMULA_DOMAIN` filled in `.env`
 
 It copies `conf.d/staging.caddy` to `/srv/caddy/conf.d/`, recreates Caddy if
 its environment changed, and reloads. If Caddy rejects the file, it removes
-it again and the old config stays active. Caddy then requests certificates
-for the eight hostnames (`docker compose logs -f caddy`).
+it again and the old config stays active. It refuses to run without a real
+`CLOUDFLARE_API_TOKEN`: Caddy rejects a DNS provider without a usable token,
+and a rejected file would stop Caddy, Evolution's route included, at its next
+restart. Caddy then requests certificates for the nine hostnames over DNS-01
+(`docker compose logs -f caddy | grep -i acme`).
 
-Check with `./smoke.sh`: each vhost must answer from nginx (or 502 for all
-of them while `baja-nginx` is down).
+Check with `./smoke.sh` (§10): 403 for every hostname straight to the
+origin, an nginx answer for each through Cloudflare (502 for all while
+`baja-nginx` is down), and `CF-Connecting-IP` arriving at nginx.
 
 Disable: `./setup.sh --disable-staging`.
 
@@ -717,6 +815,22 @@ again to install the updated file.
    anything in `/opt/baja-vps/caddy.env` (Compose env-file format, e.g.
    `PIPELINE_DOMAIN=review.example.org`). After editing `caddy.env`:
    `docker compose up -d caddy` (a reload doesn't re-read the environment).
+
+   **Grey-cloud (DNS-only) hostnames, e.g. the pipeline's, are open and use
+   ordinary HTTP-01.** Such a file must **never** reuse the staging
+   Cloudflare-only pieces, not even by copying from `staging.caddy`:
+   * no `remote_ip {$CLOUDFLARE_IPS}` matcher (or any matcher built from
+     `CLOUDFLARE_IPS`): its visitors connect directly, so it would 403 every
+     one of them;
+   * no `tls { dns cloudflare … }`: it would need the token for a zone it
+     may not be in, and HTTP-01 works fine for a grey record;
+   * don't define `staging_*` names (snippets or matchers); that prefix is
+     reserved for `staging.caddy`.
+
+   The global `trusted_proxies` (Cloudflare's ranges) does apply to your
+   site too, since it is per listener. It is harmless: a direct visitor is
+   never a Cloudflare address, so Caddy uses the TCP peer as the client, and
+   a `CF-Connecting-IP` it sends is ignored.
 4. **Validate, then reload**:
    ```bash
    docker exec caddy caddy validate --config /etc/caddy/Caddyfile
@@ -851,15 +965,37 @@ An OOM kill shows as `docker inspect -f '{{.State.OOMKilled}}' <container>`
 Read-only. One `PASS`/`FAIL` line per check, exit code 1 if anything failed:
 
 * `postgres`, `redis`, `evolution`, `caddy` containers are `healthy`;
-* Caddy is attached to `baja-edge` and answers on port 80;
+* `baja-edge` has subnet `10.201.0.0/24` and Caddy is attached to it;
+* the running Caddy has the Cloudflare DNS plugin (i.e. is the custom build);
+* Caddy answers on port 80;
 * the Evolution listener is published on `TAILSCALE_IP:8081` **only**;
 * Evolution: 401 without `apikey`, 200 with it, and instance
   `EVOLUTION_INSTANCE` is `open`;
-* if the staging vhosts are enabled, each of the eight hostnames is
-  requested straight at this origin (`curl --resolve …:443:127.0.0.1`,
-  bypassing Cloudflare): with `baja-nginx` running it must answer with
-  anything but 502/503/504 (the apex gives 200; other vhosts may redirect or
-  404 their `/`); with `baja-nginx` down, every one must be 502.
+* if the staging vhosts are enabled, for each of the nine hostnames:
+  * **straight to this origin** (`curl --resolve …:443:127.0.0.1`; the peer
+    Caddy sees is the Docker gateway, not Cloudflare): must be **403**,
+    whether or not `baja-nginx` runs. Anything else means the gate is open;
+  * **through Cloudflare** (normal public DNS, so a real Cloudflare edge is
+    the peer; this is the "Cloudflare source" check): with `baja-nginx`
+    running, anything but 000/403/5xx (the apex gives 200; other vhosts may
+    redirect or 404 their `/`); with it down, 502. A 403 here means real
+    Cloudflare traffic hits the gate: stale ranges (§5.3, refresh);
+  * with `baja-nginx` running, one request through Cloudflare to the apex
+    with a unique `?baja-smoke=…` marker, then `docker logs baja-nginx`:
+    the line's client address (nginx's `$remote_addr`, which realip sets from
+    `CF-Connecting-IP`) must not be a `10.201.0.x` address. If it is, the
+    header did not arrive or nginx lacks `set_real_ip_from 10.201.0.0/24`
+    (§5.2).
+
+The Cloudflare checks need the box to resolve and reach its own public
+hostnames through Cloudflare (normal outbound HTTPS). If that is blocked,
+run the same request from any other machine and read nginx's log on the
+box:
+
+```bash
+curl -sI "https://$BAJA_DOMAIN/?baja-smoke=manual"      # elsewhere: not 403/5xx
+docker logs --since 2m baja-nginx | grep baja-smoke=manual   # on the box: first field = that machine's IP
+```
 
 ---
 
@@ -871,11 +1007,14 @@ Read-only. One `PASS`/`FAIL` line per check, exit code 1 if anything failed:
 | Caddy won't start: `address already in use` on 80/443 | `baja-nginx` (or anything else) still publishes it: `ss -ltnp 'sport = :80'`; §5.1 step 1 |
 | Caddy restarting after a conf.d change | `docker logs caddy`; remove or fix the offending `/srv/caddy/conf.d/*.caddy` (§6.4). Pipeline file without `/srv/pipeline/reviewers.txt` is a common one |
 | `network baja-edge declared as external, but could not be found` | Run `./setup.sh` |
-| `setup.sh` warns about the `baja-edge` subnet | The network was created by hand with another subnet. Either trust that subnet in nginx (§5.2), or, in a maintenance window, stop all stacks, `docker network rm baja-edge`, re-run `./setup.sh`, start them again |
+| `setup.sh`: `baja-edge exists with subnet …, must be 10.201.0.0/24` | The network was created by hand or by an older setup. In a maintenance window: stop every stack on `baja-edge` (staging, pipeline, this one), `docker network rm baja-edge`, re-run `./setup.sh`, start them again |
+| `setup.sh`: `10.201.0.0/24 overlaps: …` | Another Docker network or a host route (VPN, provider LAN) uses that range. Remove or renumber *that* (`docker network rm …`, the VPN's config); `baja-edge` can't move on its own (§2.3) |
+| Staging hostnames: 403 for real visitors | Request didn't come from Cloudflare (record set to DNS-only/grey?), or Cloudflare added ranges: §5.3, refresh |
 | Staging hostnames: 502 | `baja-nginx` down, not on `baja-edge` (`docker network inspect baja-edge`), or renamed |
 | Staging hostnames: redirect loop | nginx runs `LISTEN_MODE=listen-tls` (§5.1), or Cloudflare SSL mode is *Flexible* (§5.3) |
-| Cloudflare 525/526 | Caddy has no valid certificate yet: `docker compose logs caddy \| grep -i acme`; §5.3 |
-| Every staging visitor has the same IP in nginx logs | nginx lacks `set_real_ip_from <BAJA_EDGE_SUBNET>` (§5.2) |
+| Cloudflare 525/526 | Caddy has no valid certificate yet: `docker compose logs caddy \| grep -i acme`. DNS-01 errors: token missing/wrong scope (`Zone:DNS:Edit` + `Zone:Zone:Read` on both zones), or `expected 1 zone` (the zone isn't in that Cloudflare account); §5.3 |
+| `smoke.sh`: `caddy lacks dns.providers.cloudflare` | Caddy runs the stock image: `docker compose build caddy && docker compose up -d caddy` (§3) |
+| Every staging visitor has the same IP in nginx logs | nginx lacks `set_real_ip_from 10.201.0.0/24` (§5.2) |
 | Evolution unreachable on 8081 from a tailnet device | `ufw allow in on tailscale0` missing; Tailscale ACL doesn't allow you to `tag:server:8081`; `docker port caddy` doesn't show `TAILSCALE_IP:8081` |
 | Evolution instance not `open` | §4.8, "If the state is not open" |
 | `volume … already exists but was created for project "baja"` | Expected after §4.10; harmless |
@@ -898,6 +1037,9 @@ Read-only. One `PASS`/`FAIL` line per check, exit code 1 if anything failed:
   token, so it is not affected.
 * **Manager password**: new hash in `MANAGER_BASIC_AUTH_HASH`, then
   `docker compose up -d caddy`.
+* **Cloudflare API token**: create the new one (same scope, §5.3), put it in
+  `CLOUDFLARE_API_TOKEN`, `docker compose up -d caddy`, check
+  `./smoke.sh`, then revoke the old one at Cloudflare.
 * **Webhook secret**: the pipeline's runbook, then §7.2 again.
 
 ---
@@ -931,5 +1073,11 @@ Evolution API (official docs live at docs.evolutionfoundation.com.br; doc.evolut
 Caddy:
 
 * `trusted_proxies` / `client_ip_headers`: https://caddyserver.com/docs/caddyfile/options#trusted-proxies
+* `remote_ip` matcher (TCP peer, vs `client_ip`): https://caddyserver.com/docs/caddyfile/matchers#remote-ip
+* `tls` / `dns` (DNS-01 per site): https://caddyserver.com/docs/caddyfile/directives/tls
+* Custom builds (`caddy:<v>-builder`, xcaddy): https://hub.docker.com/_/caddy (section "Adding custom Caddy modules")
+* `caddy-dns/cloudflare` (token scopes, troubleshooting): https://github.com/caddy-dns/cloudflare
+* `caddy-cloudflare-ip`, not used (unmaintained, §5.3): https://github.com/WeidiDeng/caddy-cloudflare-ip
+* Cloudflare IP ranges: https://www.cloudflare.com/ips/ ; SSL modes: https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/
 * `reverse_proxy` headers (Host, X-Forwarded-*): https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers
 * `import` with globs: https://caddyserver.com/docs/caddyfile/directives/import

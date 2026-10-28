@@ -8,7 +8,8 @@
 # (README §6). This repo installs conf.d/staging.caddy from there.
 #
 # {$VAR} placeholders come from the container environment (docker-compose.yml,
-# plus the optional caddy.env) and are substituted when Caddy loads the config.
+# caddy/cloudflare-ips.env, the optional caddy.env) and are substituted when
+# Caddy loads the config.
 # Reload after editing this file or any conf.d file:
 #   docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 
@@ -21,17 +22,24 @@
 	# The admin API stays on localhost:2019 INSIDE the container (default).
 	# It is not published; `caddy reload` and the healthcheck use it.
 
+	# No acme_dns here: DNS-01 is set per site, on the Cloudflare-proxied
+	# staging vhosts only (conf.d/staging.caddy). Every other site, e.g. the
+	# pipeline's grey-cloud hostname, keeps the default HTTP-01/TLS-ALPN.
+
 	servers {
 		# Cloudflare proxies the staging domains (README §5.3). For requests
 		# that arrive FROM a Cloudflare range, Caddy takes the client IP from
 		# CF-Connecting-IP; from anywhere else, the TCP peer is the client and
 		# any CF-Connecting-IP it sent is ignored. Either way {client_ip} is
-		# the real client, for access logs and for upstreams (staging.caddy).
+		# the real client, for access logs and for upstreams.
 		#
-		# Same ranges as baja-infra/nginx/templates/00-cloudflare-realip.conf.template
-		# (https://www.cloudflare.com/ips-v4 and ips-v6, fetched 2026-08-16).
-		# Keep the two lists in step.
-		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		# This is per listener, so it covers every site on :443, not only
+		# staging. Harmless for grey-cloud sites: their visitors are never
+		# Cloudflare addresses, so it never applies to them.
+		#
+		# {$CLOUDFLARE_IPS} comes from caddy/cloudflare-ips.env, the same list
+		# staging.caddy's remote_ip gate uses (README §5.3).
+		trusted_proxies static {$CLOUDFLARE_IPS}
 		client_ip_headers CF-Connecting-IP
 	}
 }

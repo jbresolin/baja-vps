@@ -16,14 +16,14 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 FAKE_BIN = REPO / "tests" / "fake-bin"
-COPIED = ["setup.sh", "backup.sh", "smoke.sh", "lib", "conf.d"]
+COPIED = ["setup.sh", "backup.sh", "smoke.sh", "lib", "conf.d", "caddy"]
 
 # A complete, valid .env. Tests override single values.
 BASE_ENV = {
     "TAILSCALE_IP": "100.64.0.7",
-    "BAJA_EDGE_SUBNET": "10.203.0.0/24",
     "BAJA_DOMAIN": "staging.test",
     "FORMULA_DOMAIN": "forum.formula.test",
+    "CLOUDFLARE_API_TOKEN": "cf-t0ken",
     "EVOLUTION_API_KEY": "k3y",
     "EVOLUTION_INSTANCE": "BajaBot",
     "POSTGRES_USER": "evolution",

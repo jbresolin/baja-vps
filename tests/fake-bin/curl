@@ -2,8 +2,9 @@
 """Fake `curl` for the smoke.sh tests.
 
 $FAKE_SCENARIO's "curl" list holds rules {"url": substring, "header":
-optional substring of a -H value, "code": "200", "body": "..."}; the first
-match answers. No match behaves like a refused connection (code 000, exit 7).
+optional substring of a -H value, "direct": optional bool (true = only
+requests with --resolve, i.e. straight to the origin; false = only without),
+"code": "200", "body": "..."}; the first match answers. No match behaves like a refused connection (code 000, exit 7).
 Calls are logged to $FAKE_LOG like the fake docker.
 """
 import json
@@ -26,6 +27,8 @@ def main(argv):
         if rule["url"] not in url:
             continue
         if "header" in rule and not any(rule["header"] in h for h in headers):
+            continue
+        if "direct" in rule and rule["direct"] != ("--resolve" in argv):
             continue
         if not discard_body:
             sys.stdout.write(rule.get("body", ""))

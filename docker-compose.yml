@@ -29,7 +29,8 @@ services:
   # ---------------------------------------------------------------------------
   # Caddy: the only container with published ports.
   #   80/443 (+443/udp for HTTP/3) on all interfaces: public vhosts from
-  #     /srv/caddy/conf.d/*.caddy, TLS via Let's Encrypt.
+  #     /srv/caddy/conf.d/*.caddy, TLS via Let's Encrypt (HTTP-01 by default,
+  #     DNS-01 through Cloudflare for the staging vhosts).
   #   ${TAILSCALE_IP}:8081: Evolution API + Manager, tailnet only.
   #   ${TAILSCALE_IP}:8080: reserved for the pipeline's tailnet worker API
   #     (its conf.d file defines the `http://:8080` site). Nothing listens
@@ -38,7 +39,11 @@ services:
   #   host (README §1.3). Without it Docker races tailscaled at boot.
   # ---------------------------------------------------------------------------
   caddy:
-    image: caddy:2.11.7-alpine
+    # Stock Caddy + the caddy-dns/cloudflare plugin (DNS-01 for staging).
+    # Built locally: `docker compose build caddy` (README §3). The tag names
+    # both pinned versions; bump it together with caddy/Dockerfile.
+    build: ./caddy
+    image: baja-caddy:2.11.7-cf0.2.4
     container_name: caddy
     restart: unless-stopped
     ports:
@@ -53,6 +58,10 @@ services:
     env_file:
       - path: ./caddy.env
         required: false
+      # CLOUDFLARE_IPS: trusted_proxies + the staging gate (README §5.3).
+      # Listed last so caddy.env cannot override it by accident.
+      - path: ./caddy/cloudflare-ips.env
+        required: true
     environment:
       ACME_EMAIL: ${ACME_EMAIL}
       MANAGER_BASIC_AUTH_USER: ${MANAGER_BASIC_AUTH_USER}
@@ -60,6 +69,9 @@ services:
       # Used by conf.d/staging.caddy. Harmless while that file is not installed.
       BAJA_DOMAIN: ${BAJA_DOMAIN:-}
       FORMULA_DOMAIN: ${FORMULA_DOMAIN:-}
+      # DNS-01 for the staging vhosts. Read at runtime ({env.*}), only by
+      # staging.caddy; setup.sh --enable-staging refuses to run without it.
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # Site files from this repo and the other stacks. Directory, not single
@@ -290,9 +302,10 @@ volumes:
     name: baja_caddy_config
 
 networks:
-  # Shared with every stack that plugs in. Created by setup.sh with a fixed
-  # subnet (BAJA_EDGE_SUBNET), so baja-nginx can trust Caddy's address for
-  # the real client IP (README §5.2). This stack never creates it.
+  # Shared with every stack that plugs in. Created by setup.sh with the
+  # FIXED subnet 10.201.0.0/24: staging nginx (set_real_ip_from) and the
+  # pipeline orchestrator (BVP_TRUSTED_PROXY_CIDRS) trust exactly that range
+  # as their proxy, Caddy (README §5.2). This stack never creates it.
   edge:
     name: baja-edge
     external: true

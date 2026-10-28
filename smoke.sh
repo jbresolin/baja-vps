@@ -50,12 +50,29 @@ check_containers() {
 }
 
 check_edge_network() {
-	local members
-	members="$(docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' baja-edge 2>/dev/null)"
-	if [[ " $members " == *" caddy "* ]]; then
-		pass "network baja-edge: caddy attached"
+	local members subnet
+	subnet="$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$EDGE_NETWORK" 2>/dev/null)"
+	subnet="${subnet% }"
+	if [ "$subnet" = "$EDGE_SUBNET" ]; then
+		pass "network $EDGE_NETWORK: subnet $EDGE_SUBNET"
 	else
-		fail "network baja-edge: caddy not attached (members: ${members:-none})"
+		fail "network $EDGE_NETWORK: subnet '${subnet:-none}' (must be $EDGE_SUBNET)"
+	fi
+	members="$(docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "$EDGE_NETWORK" 2>/dev/null)"
+	if [[ " $members " == *" caddy "* ]]; then
+		pass "network $EDGE_NETWORK: caddy attached"
+	else
+		fail "network $EDGE_NETWORK: caddy not attached (members: ${members:-none})"
+	fi
+}
+
+# The running Caddy must be the custom build (caddy/Dockerfile), or the
+# staging vhosts cannot get certificates.
+check_caddy_plugin() {
+	if docker exec caddy caddy list-modules 2>/dev/null | grep -qx dns.providers.cloudflare; then
+		pass "caddy has the Cloudflare DNS plugin"
+	else
+		fail "caddy lacks dns.providers.cloudflare (stock image? docker compose build caddy, README §3)"
 	fi
 }
 
@@ -100,9 +117,28 @@ check_evolution_api() {
 	fi
 }
 
-# Each staging vhost, straight to this origin (not through Cloudflare).
-# baja-nginx running -> nginx must answer (200 for the apex; other vhosts
-# may redirect or 404 their root, which is fine). Not running -> 502.
+# Same hostnames as conf.d/staging.caddy's site address. Keep in step.
+staging_hosts() {
+	local label
+	echo "$BAJA_DOMAIN"
+	for label in www api certificado fila juiz resultados forum; do
+		echo "$label.$BAJA_DOMAIN"
+	done
+	echo "$FORMULA_DOMAIN"
+}
+
+# Staging vhosts are Cloudflare-only (README §5.3). Three checks:
+#  1. Straight to this origin: the peer is the Docker gateway, not a
+#     Cloudflare address, so every hostname must answer 403, whether or not
+#     baja-nginx runs. Anything else means the gate is open.
+#  2. Through Cloudflare (public DNS, so a real Cloudflare edge is the peer):
+#     baja-nginx running -> nginx answers (any code but 000/403/5xx; vhosts
+#     may redirect or 404 their root). Not running -> 502.
+#  3. CF-Connecting-IP reaches nginx: one marked request through Cloudflare
+#     to the apex, then nginx's access log for it. nginx's realip module puts
+#     CF-Connecting-IP in $remote_addr (the first field of the default log
+#     format) only if the header arrived and nginx trusts baja-edge (§5.2);
+#     otherwise the line shows Caddy's baja-edge address.
 check_staging_vhosts() {
 	if [ ! -f "$CADDY_DIR/conf.d/staging.caddy" ]; then
 		log "staging vhosts not enabled; skipped"
@@ -110,18 +146,48 @@ check_staging_vhosts() {
 	fi
 	local nginx_up=0 host code
 	[ "$(docker inspect -f '{{.State.Running}}' baja-nginx 2>/dev/null)" = true ] && nginx_up=1
-	for host in "$BAJA_DOMAIN" api."$BAJA_DOMAIN" certificado."$BAJA_DOMAIN" fila."$BAJA_DOMAIN" \
-		juiz."$BAJA_DOMAIN" resultados."$BAJA_DOMAIN" forum."$BAJA_DOMAIN" "$FORMULA_DOMAIN"; do
-		code="$(http_code --resolve "$host:443:127.0.0.1" "https://$host/")"
+
+	while read -r host; do
+		expect_code "staging $host direct to origin (not Cloudflare)" \
+			"$(http_code --resolve "$host:443:127.0.0.1" "https://$host/")" 403
+	done < <(staging_hosts)
+
+	while read -r host; do
+		code="$(http_code "https://$host/")"
 		if [ "$nginx_up" = 1 ]; then
 			case "$code" in
-			000 | 502 | 503 | 504) fail "staging $host: HTTP $code with baja-nginx running" ;;
-			*) pass "staging $host: HTTP $code (baja-nginx running)" ;;
+			000 | 403 | 5??) fail "staging $host via Cloudflare: HTTP $code with baja-nginx running" ;;
+			*) pass "staging $host via Cloudflare: HTTP $code (baja-nginx running)" ;;
 			esac
 		else
-			expect_code "staging $host (baja-nginx down)" "$code" 502
+			expect_code "staging $host via Cloudflare (baja-nginx down)" "$code" 502
 		fi
+	done < <(staging_hosts)
+
+	if [ "$nginx_up" = 1 ]; then
+		check_cf_connecting_ip
+	else
+		log "baja-nginx not running; CF-Connecting-IP check skipped"
+	fi
+}
+
+check_cf_connecting_ip() {
+	local marker line addr
+	marker="baja-smoke=$(date +%s)-$$-$RANDOM"
+	http_code "https://$BAJA_DOMAIN/?$marker" >/dev/null
+	for _ in 1 2 3; do
+		line="$(docker logs --since 2m baja-nginx 2>&1 | grep -F "$marker" | tail -n1)"
+		[ -n "$line" ] && break
+		sleep 1
 	done
+	addr="${line%% *}"
+	if [ -z "$line" ]; then
+		fail "CF-Connecting-IP: marked request never reached baja-nginx's log"
+	elif [[ "$addr" == "${EDGE_SUBNET%.*/*}."* ]]; then
+		fail "CF-Connecting-IP: nginx logged Caddy's address $addr (header missing, or nginx lacks set_real_ip_from $EDGE_SUBNET, README §5.2)"
+	else
+		pass "CF-Connecting-IP reaches nginx (client $addr)"
+	fi
 }
 
 main() {
@@ -129,6 +195,7 @@ main() {
 	require_vars TAILSCALE_IP EVOLUTION_API_KEY EVOLUTION_INSTANCE
 	check_containers
 	check_edge_network
+	check_caddy_plugin
 	check_caddy_http
 	check_evolution_binding
 	check_evolution_api
