@@ -1,0 +1,12 @@
+# Daily Evolution backup at 03:30 server time.
+# Persistent: a run missed while the VPS was off happens at the next boot.
+[Unit]
+Description=Daily Evolution backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

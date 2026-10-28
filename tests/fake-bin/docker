@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Fake `docker` for the script tests.
+
+Behaviour comes from the JSON scenario file named by $FAKE_SCENARIO; every
+call is appended to $FAKE_LOG as one JSON array per line. Only the commands
+the scripts actually run are understood; anything else fails loudly so a new
+call cannot pass a test by accident.
+"""
+import json
+import os
+import sys
+
+
+def main(argv):
+    with open(os.environ["FAKE_SCENARIO"]) as f:
+        scenario = json.load(f)
+    with open(os.environ["FAKE_LOG"], "a") as f:
+        f.write(json.dumps(argv) + "\n")
+
+    joined = " ".join(argv)
+    for needle in scenario.get("fail_on", []):
+        if needle in joined:
+            print(f"fake docker: failing on {needle!r}", file=sys.stderr)
+            return 1
+
+    # `docker compose --project-directory D -f F <sub...>` -> ["compose", sub...]
+    if argv[:1] == ["compose"]:
+        rest = argv[1:]
+        while rest and rest[0] in ("--project-directory", "-f"):
+            rest = rest[2:]
+        return compose(scenario, rest)
+
+    cmd, args = argv[0], argv[1:]
+    if cmd == "run" and "tar" in args:
+        sys.stdout.write(scenario.get("instances_tgz", "TGZ-fake"))
+        return 0
+    if cmd == "inspect":
+        return lookup(scenario.get("inspect", {}), args[-1])
+    if cmd == "network" and args[0] == "inspect":
+        if "network" not in scenario:
+            return 1
+        print(scenario["network"])
+        return 0
+    if cmd == "network" and args[0] == "create":
+        return 0
+    if cmd == "port":
+        print(scenario.get("port", ""))
+        return 0
+    if cmd == "exec" and "reload" in args:
+        return scenario.get("reload_rc", 0)
+    print(f"fake docker: unexpected call {argv}", file=sys.stderr)
+    return 99
+
+
+def compose(scenario, rest):
+    if rest[:3] == ["exec", "-T", "postgres"]:
+        sys.stdout.write(scenario.get("pg_dump", "PGDMP-fake"))
+        return 0
+    if rest[:3] == ["exec", "-T", "redis"]:
+        return 0
+    if rest[:1] == ["cp"]:
+        with open(rest[2], "w") as f:
+            f.write(scenario.get("rdb", "REDIS-fake"))
+        return 0
+    if rest[:2] == ["ps", "-q"]:
+        print(scenario.get("ids", {}).get(rest[2], ""))
+        return 0
+    if rest[:2] == ["up", "-d"]:
+        return 0
+    print(f"fake docker compose: unexpected call {rest}", file=sys.stderr)
+    return 99
+
+
+def lookup(table, key):
+    if key not in table:
+        return 1
+    print(table[key])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,7 @@
+# Real secrets live only on the VPS.
+.env
+caddy.env
+# Python test harness.
+__pycache__/
+# Scratch notes.
+.scratch/

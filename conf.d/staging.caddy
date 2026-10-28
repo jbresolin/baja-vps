@@ -1,0 +1,39 @@
+# Scoring app staging (tiagomartines11/baja-sae-brasil-online, baja-infra/).
+#
+# Installed into /srv/caddy/conf.d by `./setup.sh --enable-staging` (README §5).
+# Every hostname the nginx templates in baja-infra/nginx/templates/ define:
+#   baja-root.conf             ${BAJA_DOMAIN}
+#   baja-app-api.conf          api.${BAJA_DOMAIN}
+#   baja-app-certificado.conf  certificado.${BAJA_DOMAIN}
+#   baja-app-fila.conf         fila.${BAJA_DOMAIN}
+#   baja-app-juiz.conf         juiz.${BAJA_DOMAIN}
+#   baja-app-resultados.conf   resultados.${BAJA_DOMAIN}
+#   phpbb-baja.conf            forum.${BAJA_DOMAIN}
+#   phpbb-formula.conf         ${FORMULA_DOMAIN}  (whole hostname, not a label)
+# If a template is added or renamed there, update this list.
+#
+# Caddy terminates TLS and proxies plain HTTP to baja-nginx:80 on baja-edge,
+# so staging nginx must run with LISTEN_MODE=listen-http (README §5.1).
+# If baja-nginx is down its name stops resolving and Caddy answers 502.
+# That is accepted: the base stack does not depend on staging.
+
+# Upstream for every staging vhost.
+#   Host:              passed unchanged (Caddy's default); nginx picks the vhost by it.
+#   CF-Connecting-IP:  the real client, as Caddy determined it (Caddyfile
+#                      `trusted_proxies`). Always overwritten, so a client
+#                      cannot choose its own address. nginx's realip module
+#                      reads exactly this header, and accepts it once it
+#                      trusts baja-edge (README §5.2).
+#   X-Real-IP:         same value, for anything that reads it.
+#   X-Forwarded-For / -Proto / -Host: set by Caddy by default (Proto = https).
+(staging_upstream) {
+	reverse_proxy baja-nginx:80 {
+		header_up CF-Connecting-IP {client_ip}
+		header_up X-Real-IP {client_ip}
+	}
+}
+
+{$BAJA_DOMAIN}, api.{$BAJA_DOMAIN}, certificado.{$BAJA_DOMAIN}, fila.{$BAJA_DOMAIN}, juiz.{$BAJA_DOMAIN}, resultados.{$BAJA_DOMAIN}, forum.{$BAJA_DOMAIN}, {$FORMULA_DOMAIN} {
+	import access_log
+	import staging_upstream
+}
