@@ -3,8 +3,8 @@ from harness import ScriptTestCase
 
 TS = "100.64.0.7"
 STAGING_HOSTS = [
-    "staging.test", "www.staging.test", "api.staging.test", "certificado.staging.test",
-    "fila.staging.test", "juiz.staging.test", "resultados.staging.test",
+    "staging.test", "api.staging.test", "certificado.staging.test", "fila.staging.test",
+    "juiz.staging.test", "resultados.staging.test",
     "forum.staging.test", "forum.formula.test",
 ]
 

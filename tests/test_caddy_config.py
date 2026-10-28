@@ -32,7 +32,7 @@ class CaddyFilesTest(ScriptTestCase):
 
     def test_staging_hosts_match_smoke_list(self):
         self.assertEqual(staging_site_hosts(), [
-            "{$BAJA_DOMAIN}", "www.{$BAJA_DOMAIN}", "api.{$BAJA_DOMAIN}", "certificado.{$BAJA_DOMAIN}",
+            "{$BAJA_DOMAIN}", "api.{$BAJA_DOMAIN}", "certificado.{$BAJA_DOMAIN}",
             "fila.{$BAJA_DOMAIN}", "juiz.{$BAJA_DOMAIN}", "resultados.{$BAJA_DOMAIN}",
             "forum.{$BAJA_DOMAIN}", "{$FORMULA_DOMAIN}",
         ])

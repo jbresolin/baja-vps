@@ -32,7 +32,7 @@ Copy-paste runbook. You run every command yourself, as root on the VPS
             │ 80/443   │                                :8081 │   │ :8080
    ┌────────▼──────────▼────────── VPS ───────────────────────▼───▼────┐
    │  caddy  (only container with published ports)                     │
-   │   ├─ conf.d/staging.caddy  {BAJA_DOMAIN} + 7 subdomains,          │
+   │   ├─ conf.d/staging.caddy  {BAJA_DOMAIN} + 6 subdomains,          │
    │   │   Cloudflare-only      {FORMULA_DOMAIN} ──────► baja-nginx:80 │
    │   ├─ conf.d/<pipeline>.caddy  (open; + :8080) ───► orchestrator   │
    │   └─ http://:8081 (TAILSCALE_IP only) ───────────► evolution:8080 │
@@ -616,19 +616,18 @@ starts the new one.
 ## 5. Scoring staging vhosts
 
 `conf.d/staging.caddy` serves every hostname the scoring repo's nginx
-templates define (`server_name` in `baja-infra/nginx/templates/`), plus
-`www.`, and proxies them to `baja-nginx:80`:
+templates define (`server_name` in `baja-infra/nginx/templates/`), and
+proxies them to `baja-nginx:80`:
 
-`BAJA_DOMAIN`, `www.`, `api.`, `certificado.`, `fila.`, `juiz.`,
-`resultados.`, `forum.` + `BAJA_DOMAIN`, and `FORMULA_DOMAIN` (a whole
-hostname). Nine in all.
+`BAJA_DOMAIN`, `api.`, `certificado.`, `fila.`, `juiz.`, `resultados.`,
+`forum.` + `BAJA_DOMAIN`, and `FORMULA_DOMAIN` (a whole hostname). Eight in
+all.
 
-`www.` has no `server_name` of its own in the templates (it appears only in
-`API_CORS_ORIGINS`), so nginx answers it from its default server, the root
-vhost. If it should redirect to the apex instead, that belongs in the scoring
-repo's templates.
+No `www.`: no template has a `server_name` for it (it appears only in
+`API_CORS_ORIGINS`). If the scoring repo adds one, add it to `staging.caddy`
+and `smoke.sh` too.
 
-All nine are **Cloudflare-proxied and Cloudflare-only** (§5.3). Caddy
+All eight are **Cloudflare-proxied and Cloudflare-only** (§5.3). Caddy
 terminates TLS; nginx sees plain HTTP. If `baja-nginx` is down, those
 hostnames answer 502. That is accepted: nothing here depends on staging.
 
@@ -746,8 +745,7 @@ the pipeline's hostnames keep ordinary HTTP-01.
 What that needs, in the Cloudflare dashboard (owner):
 
 * DNS: one **proxied** (orange) record per staging hostname above → the
-  VPS's public IP. `www.` too, or drop it from `staging.caddy` and
-  `smoke.sh`.
+  VPS's public IP.
 * SSL/TLS mode **Full (strict)** for both zones (`BAJA_DOMAIN`'s and
   `FORMULA_DOMAIN`'s). Caddy has real Let's Encrypt certificates. *Flexible*
   would make Cloudflare speak HTTP to the origin, and Caddy would redirect it
@@ -774,7 +772,7 @@ its environment changed, and reloads. If Caddy rejects the file, it removes
 it again and the old config stays active. It refuses to run without a real
 `CLOUDFLARE_API_TOKEN`: Caddy rejects a DNS provider without a usable token,
 and a rejected file would stop Caddy, Evolution's route included, at its next
-restart. Caddy then requests certificates for the nine hostnames over DNS-01
+restart. Caddy then requests certificates for the eight hostnames over DNS-01
 (`docker compose logs -f caddy | grep -i acme`).
 
 Check with `./smoke.sh` (§10): 403 for every hostname straight to the
@@ -971,7 +969,7 @@ Read-only. One `PASS`/`FAIL` line per check, exit code 1 if anything failed:
 * the Evolution listener is published on `TAILSCALE_IP:8081` **only**;
 * Evolution: 401 without `apikey`, 200 with it, and instance
   `EVOLUTION_INSTANCE` is `open`;
-* if the staging vhosts are enabled, for each of the nine hostnames:
+* if the staging vhosts are enabled, for each of the eight hostnames:
   * **straight to this origin** (`curl --resolve …:443:127.0.0.1`; the peer
     Caddy sees is the Docker gateway, not Cloudflare): must be **403**,
     whether or not `baja-nginx` runs. Anything else means the gate is open;

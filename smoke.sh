@@ -121,7 +121,7 @@ check_evolution_api() {
 staging_hosts() {
 	local label
 	echo "$BAJA_DOMAIN"
-	for label in www api certificado fila juiz resultados forum; do
+	for label in api certificado fila juiz resultados forum; do
 		echo "$label.$BAJA_DOMAIN"
 	done
 	echo "$FORMULA_DOMAIN"

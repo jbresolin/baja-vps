@@ -10,10 +10,8 @@
 #   baja-app-resultados.conf   resultados.${BAJA_DOMAIN}
 #   phpbb-baja.conf            forum.${BAJA_DOMAIN}
 #   phpbb-formula.conf         ${FORMULA_DOMAIN}  (whole hostname, not a label)
-# plus www.${BAJA_DOMAIN}, which is in the staging API_CORS_ORIGINS but has no
-# server_name of its own: nginx answers it from its default server (the root
-# vhost). If a template is added or renamed there, update this list, and the
-# one in smoke.sh (STAGING_HOSTS).
+# No www.: no template defines it. If a template is added or renamed there,
+# update this list, and the one in smoke.sh (staging_hosts).
 #
 # Every one of these is Cloudflare-PROXIED (orange cloud), README §5.3:
 #   - only Cloudflare may connect (the remote_ip gate below; anyone else 403);
@@ -31,7 +29,7 @@
 # Port 80 is Caddy's automatic HTTP->HTTPS redirect for these names, for
 # everyone; the redirect leads to 443, where the gate applies.
 
-{$BAJA_DOMAIN}, www.{$BAJA_DOMAIN}, api.{$BAJA_DOMAIN}, certificado.{$BAJA_DOMAIN}, fila.{$BAJA_DOMAIN}, juiz.{$BAJA_DOMAIN}, resultados.{$BAJA_DOMAIN}, forum.{$BAJA_DOMAIN}, {$FORMULA_DOMAIN} {
+{$BAJA_DOMAIN}, api.{$BAJA_DOMAIN}, certificado.{$BAJA_DOMAIN}, fila.{$BAJA_DOMAIN}, juiz.{$BAJA_DOMAIN}, resultados.{$BAJA_DOMAIN}, forum.{$BAJA_DOMAIN}, {$FORMULA_DOMAIN} {
 	import access_log
 
 	# Token: Zone:DNS:Edit + Zone:Zone:Read on both zones (README §5.3).
