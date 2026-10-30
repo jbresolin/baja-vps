@@ -1,0 +1,14 @@
+# Evolution session backup (backup.sh). Started by baja-evolution-backup.timer.
+# Install: README §8. Logs: journalctl -u baja-evolution-backup
+[Unit]
+Description=Back up Evolution (Postgres, Redis, instances volume)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+# The checkout path from README §2.1.
+ExecStart=/opt/baja-vps/backup.sh
+# Backups go to disk only; keep the job from starving the containers.
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+"""Fake `ip` for the setup.sh tests: prints $FAKE_SCENARIO's "routes" (the
+output of `ip -4 route show table all`), or fails if "ip_fails" is set.
+Calls are logged to $FAKE_LOG like the fake docker."""
+import json
+import os
+import sys
+
+DEFAULT_ROUTES = """\
+default via 172.31.1.1 dev eth0 proto dhcp src 203.0.113.10 metric 100
+172.17.0.0/16 dev docker0 proto kernel scope link src 172.17.0.1 linkdown
+172.31.1.1 dev eth0 proto dhcp scope link src 203.0.113.10 metric 100
+100.100.100.100 dev tailscale0 table 52
+throw 127.0.0.0/8 table 52
+local 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1
+broadcast 172.17.255.255 dev docker0 table local proto kernel scope link src 172.17.0.1 linkdown
+"""
+
+
+def main(argv):
+    with open(os.environ["FAKE_SCENARIO"]) as f:
+        scenario = json.load(f)
+    with open(os.environ["FAKE_LOG"], "a") as f:
+        f.write(json.dumps(["ip"] + argv) + "\n")
+    if scenario.get("ip_fails"):
+        print("fake ip: failing", file=sys.stderr)
+        return 1
+    sys.stdout.write(scenario.get("routes", DEFAULT_ROUTES))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

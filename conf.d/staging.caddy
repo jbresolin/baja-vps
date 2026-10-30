@@ -1,0 +1,70 @@
+# Scoring app staging (tiagomartines11/baja-sae-brasil-online, baja-infra/).
+#
+# Installed into /srv/caddy/conf.d by `./setup.sh --enable-staging` (README §5).
+# Every hostname the nginx templates in baja-infra/nginx/templates/ define:
+#   baja-root.conf             ${BAJA_DOMAIN}
+#   baja-app-api.conf          api.${BAJA_DOMAIN}
+#   baja-app-certificado.conf  certificado.${BAJA_DOMAIN}
+#   baja-app-fila.conf         fila.${BAJA_DOMAIN}
+#   baja-app-juiz.conf         juiz.${BAJA_DOMAIN}
+#   baja-app-resultados.conf   resultados.${BAJA_DOMAIN}
+#   phpbb-baja.conf            forum.${BAJA_DOMAIN}
+#   phpbb-formula.conf         ${FORMULA_DOMAIN}  (whole hostname, not a label)
+# No www.: no template defines it. If a template is added or renamed there,
+# update this list, and the one in smoke.sh (staging_hosts).
+#
+# Every one of these is Cloudflare-PROXIED (orange cloud), README §5.3:
+#   - only Cloudflare may connect (the remote_ip gate below; anyone else 403);
+#   - certificates come from the DNS-01 challenge through the Cloudflare API
+#     (HTTP-01 is unreliable behind the proxy), so this file needs the custom
+#     Caddy image (caddy/Dockerfile) and CLOUDFLARE_API_TOKEN.
+# Grey-cloud sites (the pipeline's) must NOT copy this gate or this tls block:
+# the gate would 403 every real visitor. README §6.
+#
+# Caddy terminates TLS and proxies plain HTTP to baja-nginx:80 on baja-edge,
+# so staging nginx must run with LISTEN_MODE=listen-http (README §5.1).
+# If baja-nginx is down its name stops resolving and Caddy answers 502.
+# That is accepted: the base stack does not depend on staging.
+#
+# Port 80 is Caddy's automatic HTTP->HTTPS redirect for these names, for
+# everyone; the redirect leads to 443, where the gate applies.
+
+{$BAJA_DOMAIN}, api.{$BAJA_DOMAIN}, certificado.{$BAJA_DOMAIN}, fila.{$BAJA_DOMAIN}, juiz.{$BAJA_DOMAIN}, resultados.{$BAJA_DOMAIN}, forum.{$BAJA_DOMAIN}, {$FORMULA_DOMAIN} {
+	import access_log
+
+	# Token: Zone:DNS:Edit + Zone:Zone:Read on both zones (README §5.3).
+	# {env.*} is read at runtime, so the token never appears in the config
+	# the admin API serves.
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	# remote_ip is the TCP peer itself (not the CF-Connecting-IP-derived
+	# client_ip), so this cannot be spoofed with a header. Same list as the
+	# global trusted_proxies (caddy/cloudflare-ips.env). If CLOUDFLARE_IPS
+	# were empty this would match nothing: every request gets the 403.
+	@staging_cloudflare remote_ip {$CLOUDFLARE_IPS}
+
+	# What nginx receives (all Caddy defaults; nothing here rewrites them):
+	#   Host               unchanged; nginx picks the vhost by it.
+	#   CF-Connecting-IP   passed through UNCHANGED, as Cloudflare set it.
+	#                      Only Cloudflare reaches this handler, so the value
+	#                      is always Cloudflare's. nginx's realip module reads
+	#                      this header and accepts it from baja-edge
+	#                      (README §5.2). smoke.sh checks it arrives.
+	#   X-Forwarded-For    the full chain: Cloudflare's value (the visitor)
+	#                      with the Cloudflare edge address appended, because
+	#                      the peer is a trusted proxy.
+	#   X-Forwarded-Proto  kept from Cloudflare (https).
+	#   X-Real-IP          set to {client_ip} (the visitor), so a client-sent
+	#                      value never reaches nginx.
+	handle @staging_cloudflare {
+		reverse_proxy baja-nginx:80 {
+			header_up X-Real-IP {client_ip}
+		}
+	}
+
+	handle {
+		respond "Forbidden" 403
+	}
+}
