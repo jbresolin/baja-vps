@@ -750,18 +750,22 @@ What that needs, in the Cloudflare dashboard (owner):
   `FORMULA_DOMAIN`'s). Caddy has real Let's Encrypt certificates. *Flexible*
   would make Cloudflare speak HTTP to the origin, and Caddy would redirect it
   to HTTPS forever.
-* An API token for Caddy: My Profile → API Tokens → Create Token → Custom,
+* Two API tokens for Caddy, because the Baja zone and the Formula zone are
+  in **different Cloudflare accounts** and a token is scoped to one account.
+  In each account: My Profile → API Tokens → Create Token → Custom,
   permissions **Zone / DNS / Edit** and **Zone / Zone / Read**, zone
-  resources limited to the two zones. Put it in `.env` as
-  `CLOUDFLARE_API_TOKEN`. Caddy reads it at runtime (`{env.…}`), so it never
-  appears in the config the admin API serves.
+  resources limited to that account's zone. Put them in `.env` as
+  `CLOUDFLARE_API_TOKEN` (Baja zone) and `CLOUDFLARE_API_TOKEN_FORMULA`
+  (Formula zone). `staging.caddy` has one site block per zone for this
+  reason. Caddy reads both at runtime (`{env.…}`), so they never appear in
+  the config the admin API serves.
 * The results-page cache rule (`baja_staff` cookie) is unchanged; it lives
   at Cloudflare and nginx as before.
 
 ### 5.4 Enable
 
 After §5.1–§5.3, with `BAJA_DOMAIN`/`FORMULA_DOMAIN` filled in `.env` (the
-same values as the staging stack's `.env`) and `CLOUDFLARE_API_TOKEN` set:
+same values as the staging stack's `.env`) and both Cloudflare tokens set:
 
 ```bash
 ./setup.sh --enable-staging
@@ -769,8 +773,8 @@ same values as the staging stack's `.env`) and `CLOUDFLARE_API_TOKEN` set:
 
 It copies `conf.d/staging.caddy` to `/srv/caddy/conf.d/`, recreates Caddy if
 its environment changed, and reloads. If Caddy rejects the file, it removes
-it again and the old config stays active. It refuses to run without a real
-`CLOUDFLARE_API_TOKEN`: Caddy rejects a DNS provider without a usable token,
+it again and the old config stays active. It refuses to run without real
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_API_TOKEN_FORMULA`: Caddy rejects a DNS provider without a usable token,
 and a rejected file would stop Caddy, Evolution's route included, at its next
 restart. Caddy then requests certificates for the eight hostnames over DNS-01
 (`docker compose logs -f caddy | grep -i acme`).

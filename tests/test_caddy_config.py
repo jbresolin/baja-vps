@@ -18,9 +18,19 @@ def cloudflare_ranges(path=IPS_FILE):
 
 
 def staging_site_hosts():
+    """Every hostname served by staging.caddy, in file order.
+
+    The file has one site block per Cloudflare zone (the Baja zone and the
+    Formula zone are in different accounts, so each needs its own token).
+    A site block's first line starts with a hostname placeholder and ends
+    with "{"; the (staging_proxy) snippet line starts with "(" and is skipped.
+    """
     text = (REPO / "conf.d" / "staging.caddy").read_text()
-    site = next(l for l in text.splitlines() if l.startswith("{$BAJA_DOMAIN}"))
-    return [h.strip() for h in site.rstrip("{ ").split(",")]
+    hosts = []
+    for line in text.splitlines():
+        if line.startswith("{$") and line.rstrip().endswith("{"):
+            hosts += [h.strip() for h in line.rstrip("{ ").split(",")]
+    return hosts
 
 
 class CaddyFilesTest(ScriptTestCase):
@@ -31,6 +41,8 @@ class CaddyFilesTest(ScriptTestCase):
         self.assertIn(ipaddress.ip_network("173.245.48.0/20"), nets)
 
     def test_staging_hosts_match_smoke_list(self):
+        # Both site blocks together must list exactly the hostnames smoke.sh
+        # probes: the Baja zone's seven, then the Formula forum.
         self.assertEqual(staging_site_hosts(), [
             "{$BAJA_DOMAIN}", "api.{$BAJA_DOMAIN}", "certificado.{$BAJA_DOMAIN}",
             "fila.{$BAJA_DOMAIN}", "juiz.{$BAJA_DOMAIN}", "resultados.{$BAJA_DOMAIN}",
@@ -93,3 +105,17 @@ class RefreshCloudflareIpsTest(ScriptTestCase):
             with self.subTest(v4=v4, v6=v6):
                 self.assertFailed(self.refresh(v4, v6))
                 self.assertEqual((self.stack / "caddy" / "cloudflare-ips.env").read_text(), before)
+
+    def test_each_zone_block_uses_its_own_cloudflare_token(self):
+        # The Baja zone and the Formula zone are in different Cloudflare
+        # accounts, and an API token is scoped to one account. So the file
+        # must have two site blocks, and each must read a different token.
+        # If someone merged them back into one block, DNS-01 for one of the
+        # zones would silently fail at certificate time.
+        text = (REPO / "conf.d" / "staging.caddy").read_text()
+        tokens = re.findall(r"dns cloudflare \{env\.([A-Z_]+)\}", text)
+        self.assertEqual(tokens, ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_TOKEN_FORMULA"])
+        # The Formula block is the one right before the second token.
+        formula_block = text.split("dns cloudflare {env.CLOUDFLARE_API_TOKEN_FORMULA}")[0]
+        self.assertTrue(formula_block.rstrip().splitlines()[-2].startswith("{$FORMULA_DOMAIN} {"))
+

@@ -17,7 +17,11 @@
 #   - only Cloudflare may connect (the remote_ip gate below; anyone else 403);
 #   - certificates come from the DNS-01 challenge through the Cloudflare API
 #     (HTTP-01 is unreliable behind the proxy), so this file needs the custom
-#     Caddy image (caddy/Dockerfile) and CLOUDFLARE_API_TOKEN.
+#     Caddy image (caddy/Dockerfile) and a Cloudflare API token per zone.
+#     The two zones live in DIFFERENT Cloudflare accounts, and a token is
+#     scoped to one account, so there are two tokens and two site blocks
+#     (tls/dns is per site block). Everything else is shared via the
+#     (staging_proxy) snippet.
 # Grey-cloud sites (the pipeline's) must NOT copy this gate or this tls block:
 # the gate would 403 every real visitor. README §6.
 #
@@ -29,15 +33,9 @@
 # Port 80 is Caddy's automatic HTTP->HTTPS redirect for these names, for
 # everyone; the redirect leads to 443, where the gate applies.
 
-{$BAJA_DOMAIN}, api.{$BAJA_DOMAIN}, certificado.{$BAJA_DOMAIN}, fila.{$BAJA_DOMAIN}, juiz.{$BAJA_DOMAIN}, resultados.{$BAJA_DOMAIN}, forum.{$BAJA_DOMAIN}, {$FORMULA_DOMAIN} {
+# Shared by both site blocks below.
+(staging_proxy) {
 	import access_log
-
-	# Token: Zone:DNS:Edit + Zone:Zone:Read on both zones (README §5.3).
-	# {env.*} is read at runtime, so the token never appears in the config
-	# the admin API serves.
-	tls {
-		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-	}
 
 	# remote_ip is the TCP peer itself (not the CF-Connecting-IP-derived
 	# client_ip), so this cannot be spoofed with a header. Same list as the
@@ -67,4 +65,23 @@
 	handle {
 		respond "Forbidden" 403
 	}
+}
+
+# Baja zone (BAJA_DOMAIN's Cloudflare account).
+{$BAJA_DOMAIN}, api.{$BAJA_DOMAIN}, certificado.{$BAJA_DOMAIN}, fila.{$BAJA_DOMAIN}, juiz.{$BAJA_DOMAIN}, resultados.{$BAJA_DOMAIN}, forum.{$BAJA_DOMAIN} {
+	# Token: Zone:DNS:Edit + Zone:Zone:Read on the Baja zone (README §5.3).
+	# {env.*} is read at runtime, so the token never appears in the config
+	# the admin API serves.
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	import staging_proxy
+}
+
+# Formula zone (FORMULA_DOMAIN's Cloudflare account, a different one).
+{$FORMULA_DOMAIN} {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN_FORMULA}
+	}
+	import staging_proxy
 }

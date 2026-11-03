@@ -146,7 +146,7 @@ base_setup() {
 }
 
 enable_staging() {
-	require_vars BAJA_DOMAIN FORMULA_DOMAIN CLOUDFLARE_API_TOKEN
+	require_vars BAJA_DOMAIN FORMULA_DOMAIN CLOUDFLARE_API_TOKEN CLOUDFLARE_API_TOKEN_FORMULA
 	case "$BAJA_DOMAIN $FORMULA_DOMAIN" in
 	*example.*) die "BAJA_DOMAIN / FORMULA_DOMAIN still hold example values" ;;
 	esac
@@ -154,6 +154,8 @@ enable_staging() {
 	# would not start at all after a restart (Evolution's route included).
 	[ "$CLOUDFLARE_API_TOKEN" != REPLACE_ME ] ||
 		die "CLOUDFLARE_API_TOKEN still holds the example value (README §5.3)"
+	[ "$CLOUDFLARE_API_TOKEN_FORMULA" != REPLACE_ME ] ||
+		die "CLOUDFLARE_API_TOKEN_FORMULA still holds the example value (README §5.3)"
 	[ -d "$CADDY_DIR/conf.d" ] || die "$CADDY_DIR/conf.d missing; run ./setup.sh first"
 
 	install -m 644 "$STACK_DIR/conf.d/staging.caddy" "$STAGING_FILE"

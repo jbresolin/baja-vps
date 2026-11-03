@@ -24,6 +24,7 @@ BASE_ENV = {
     "BAJA_DOMAIN": "staging.test",
     "FORMULA_DOMAIN": "forum.formula.test",
     "CLOUDFLARE_API_TOKEN": "cf-t0ken",
+    "CLOUDFLARE_API_TOKEN_FORMULA": "cf-t0ken-formula",
     "EVOLUTION_API_KEY": "k3y",
     "EVOLUTION_INSTANCE": "BajaBot",
     "POSTGRES_USER": "evolution",

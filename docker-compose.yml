@@ -70,8 +70,11 @@ services:
       BAJA_DOMAIN: ${BAJA_DOMAIN:-}
       FORMULA_DOMAIN: ${FORMULA_DOMAIN:-}
       # DNS-01 for the staging vhosts. Read at runtime ({env.*}), only by
-      # staging.caddy; setup.sh --enable-staging refuses to run without it.
+      # staging.caddy; setup.sh --enable-staging refuses to run without them.
+      # One token per zone: the Baja and Formula zones are in different
+      # Cloudflare accounts, and a token is scoped to one account.
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_API_TOKEN_FORMULA: ${CLOUDFLARE_API_TOKEN_FORMULA:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # Site files from this repo and the other stacks. Directory, not single

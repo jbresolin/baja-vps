@@ -128,13 +128,17 @@ class StagingSwitchTest(ScriptTestCase):
         self.assertFalse(self.installed.exists())
 
     def test_enable_requires_a_real_cloudflare_token(self):
-        for token in (None, "REPLACE_ME"):
-            with self.subTest(token=token):
-                self.write_env(CLOUDFLARE_API_TOKEN=token)
-                result = self.run_script("setup.sh", "--enable-staging")
-                self.assertFailed(result)
-                self.assertIn("CLOUDFLARE_API_TOKEN", result.stderr)
-                self.assertFalse(self.installed.exists())
+        # Two zones in two Cloudflare accounts means two tokens. Each one
+        # missing, or left at the example value, must stop --enable-staging
+        # before anything is installed, and the error must name the variable.
+        for variable in ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_TOKEN_FORMULA"):
+            for token in (None, "REPLACE_ME"):
+                with self.subTest(variable=variable, token=token):
+                    self.write_env(**{variable: token})
+                    result = self.run_script("setup.sh", "--enable-staging")
+                    self.assertFailed(result)
+                    self.assertIn(variable, result.stderr)
+                    self.assertFalse(self.installed.exists())
 
     def test_disable_removes_and_reloads(self):
         self.installed.write_text("old")
