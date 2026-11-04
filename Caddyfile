@@ -91,7 +91,14 @@ http://:8081 {
 
 	# API: reject any request without an `apikey` header at the edge.
 	# Evolution still validates the key's value. (`!Field` = header absent.)
-	@no_apikey header !apikey
+	# Exception: exactly `/`, Evolution's unauthenticated hello/version
+	# endpoint. The Manager UI calls it WITHOUT a key to check the server
+	# URL before logging in; blocking it leaves the Manager stuck at login.
+	# It only returns a version string.
+	@no_apikey {
+		header !apikey
+		not path /
+	}
 	handle @no_apikey {
 		respond "Missing apikey header" 401
 	}

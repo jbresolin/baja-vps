@@ -21,8 +21,13 @@ def healthy(**overrides):
             {"url": "http://127.0.0.1/", "code": "308"},
             {"url": "/instance/connectionState/BajaBot", "header": "apikey: k3y", "code": "200",
              "body": '{"instance":{"instanceName":"BajaBot","state":"open"}}'},
+            # Rules match by substring, first match wins, so the specific
+            # route goes before the bare "/" rule.
+            # A real API route without a key must be stopped by Caddy (401);
+            # `/` is Evolution's public hello endpoint: 200 even without a key.
+            {"url": f"http://{TS}:8081/instance/fetchInstances", "code": "401"},
             {"url": f"http://{TS}:8081/", "header": "apikey: k3y", "code": "200"},
-            {"url": f"http://{TS}:8081/", "code": "401"},
+            {"url": f"http://{TS}:8081/", "code": "200"},
         ],
     }
     scenario.update(overrides)

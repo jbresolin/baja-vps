@@ -111,7 +111,10 @@ check_evolution_binding() {
 
 check_evolution_api() {
 	local base="http://$TAILSCALE_IP:8081" body state
-	expect_code "evolution: no apikey" "$(http_code "$base/")" 401
+	# `/` is Evolution's public hello endpoint (the Manager needs it keyless);
+	# any real route without a key must be stopped at Caddy with 401.
+	expect_code "evolution: hello without apikey" "$(http_code "$base/")" 200
+	expect_code "evolution: API route without apikey" "$(http_code "$base/instance/fetchInstances")" 401
 	expect_code "evolution: with apikey" "$(http_code -H "apikey: $EVOLUTION_API_KEY" "$base/")" 200
 
 	body="$(curl -s --max-time 10 -H "apikey: $EVOLUTION_API_KEY" \
