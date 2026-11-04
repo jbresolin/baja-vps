@@ -252,10 +252,30 @@ Then, depending on where Evolution's data comes from:
   before it: an empty Evolution must not start against the empty databases
   and then get migrated data underneath it.
 * **The VPS already runs the pipeline's combined stack**: §4.10.
-* **Brand-new bot with no session to keep**: `docker compose up -d`, then
-  create the instance and scan the QR in the Manager (§4.8 has the URL).
+* **Fresh instance, no session to keep** (what was done on 2026-11-03; the
+  migration in §4 is optional and only preserves the WhatsApp session and
+  old chats):
+  1. If the number is still linked to another Evolution, log that instance
+     out first (its Manager → instance → Logout, or on the phone WhatsApp →
+     Linked devices), then stop that stack. Two live instances on one
+     number both receive every message.
+  2. `docker compose up -d`. Evolution runs its DB migrations on first boot
+     and shows *starting* for 30–60 s; wait for *healthy*.
+  3. From a tailnet device, open `http://<TAILSCALE_IP>:8081/manager`:
+     browser prompt = `MANAGER_BASIC_AUTH_USER` and the password you hashed;
+     Manager login = `EVOLUTION_API_KEY`.
+  4. Create instance **`bajabot`** (the name `EVOLUTION_INSTANCE` and the
+     pipeline's `up.sh` use), channel Baileys, leave webhooks alone. Open
+     its QR and scan with the bot's phone (WhatsApp → Linked devices).
 
-When everything is up: `./smoke.sh` (§10).
+When everything is up: `./smoke.sh` (§10) — the instance line should say
+`open`.
+
+> **After `git pull` changes `Caddyfile`:** `docker compose up -d
+> --force-recreate caddy`, not `caddy reload`. `Caddyfile` is bind-mounted
+> as a single file and git replaces files by rename, so the container keeps
+> seeing the old inode; `reload` would re-read the stale copy. Files under
+> `conf.d/` are fine with `reload` because the directory is mounted.
 
 ---
 
@@ -833,7 +853,9 @@ again to install the updated file.
    site too, since it is per listener. It is harmless: a direct visitor is
    never a Cloudflare address, so Caddy uses the TCP peer as the client, and
    a `CF-Connecting-IP` it sends is ignored.
-4. **Validate, then reload**:
+4. **Validate, then reload** (this works for `conf.d/` files; a change to
+   the base `Caddyfile` itself needs `docker compose up -d --force-recreate
+   caddy`, see §3):
    ```bash
    docker exec caddy caddy validate --config /etc/caddy/Caddyfile
    docker exec caddy caddy reload --config /etc/caddy/Caddyfile
