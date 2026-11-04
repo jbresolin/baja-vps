@@ -135,7 +135,14 @@ services:
       TELEMETRY_ENABLED: "false"
       # Swagger UI is not needed. The Manager UI stays on.
       SERVER_DISABLE_DOCS: "true"
-      CORS_ORIGIN: http://${TAILSCALE_IP}:8081
+      # "*" on purpose. Evolution's CORS filter rejects ANY request without an
+      # Origin header unless the origin list contains "*" (indexOf(undefined)
+      # is -1 -> "Not allowed by CORS"). Non-browser clients never send
+      # Origin: the container health check, smoke.sh, the pipeline's
+      # orchestrator and up.sh all broke with a restricted value. CORS is a
+      # browser-side check anyway; access control here is the tailnet-only
+      # listener, Caddy's basic auth on the Manager and the API key.
+      CORS_ORIGIN: "*"
       LOG_LEVEL: ERROR,WARN,INFO,LOG
       LOG_BAILEYS: error
       # Never auto-delete a disconnected instance. Deleting it would throw away

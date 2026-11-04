@@ -78,6 +78,13 @@ check_caddy_plugin() {
 
 check_caddy_http() {
 	local code
+	# Caddy only listens on 80/443 once at least one public site file exists
+	# in conf.d (staging vhosts, or the pipeline's). Before that the probe
+	# would fail for no reason, so it is skipped, like the staging checks.
+	if ! ls "$CADDY_DIR"/conf.d/*.caddy >/dev/null 2>&1; then
+		log "no conf.d site files yet; :80 probe skipped"
+		return 0
+	fi
 	code="$(http_code http://127.0.0.1/)"
 	if [ "$code" != 000 ]; then
 		pass "caddy answers on :80 (HTTP $code)"
