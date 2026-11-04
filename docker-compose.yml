@@ -32,9 +32,10 @@ services:
   #     /srv/caddy/conf.d/*.caddy, TLS via Let's Encrypt (HTTP-01 by default,
   #     DNS-01 through Cloudflare for the staging vhosts).
   #   ${TAILSCALE_IP}:8081: Evolution API + Manager, tailnet only.
-  #   ${TAILSCALE_IP}:8080: reserved for the pipeline's tailnet worker API
-  #     (its conf.d file defines the `http://:8080` site). Nothing listens
-  #     there until it does, so connections are just refused.
+  #   ${TAILSCALE_IP}:8080 is NOT published here: the pipeline stack brings
+  #     its own Caddy (`pipeline-edge`) for its tailnet worker API and
+  #     publishes that port itself while it is up. Publishing it here too
+  #     made the pipeline's `up.sh` fail with "port is already allocated".
   #   Binding to the Tailscale IP needs net.ipv4.ip_nonlocal_bind=1 on the
   #   host (README §1.3). Without it Docker races tailscaled at boot.
   # ---------------------------------------------------------------------------
@@ -50,8 +51,7 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"
-      - "${TAILSCALE_IP:?set TAILSCALE_IP in .env}:8080:8080"
-      - "${TAILSCALE_IP}:8081:8081"
+      - "${TAILSCALE_IP:?set TAILSCALE_IP in .env}:8081:8081"
     # Variables plug-in conf.d files may use as {$NAME}. Optional, so the
     # stack starts without it; changing it needs `docker compose up -d caddy`
     # (a reload does not re-read the environment). README §6.

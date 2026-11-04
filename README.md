@@ -29,12 +29,12 @@ Copy-paste runbook. You run every command yourself, as root on the VPS
 
 ```
   Cloudflare (orange) │  internet (grey)                   tailnet (100.x)
-            │ 80/443   │                                :8081 │   │ :8080
+            │ 80/443   │                                :8081 │   │ :8080 (pipeline stack's own Caddy)
    ┌────────▼──────────▼────────── VPS ───────────────────────▼───▼────┐
-   │  caddy  (only container with published ports)                     │
+   │  caddy  (publishes 80/443 and TAILSCALE_IP:8081)                   │
    │   ├─ conf.d/staging.caddy  {BAJA_DOMAIN} + 6 subdomains,          │
    │   │   Cloudflare-only      {FORMULA_DOMAIN} ──────► baja-nginx:80 │
-   │   ├─ conf.d/<pipeline>.caddy  (open; + :8080) ───► orchestrator   │
+   │   ├─ conf.d/pipeline.caddy  (open, grey-cloud) ───► orchestrator  │
    │   └─ http://:8081 (TAILSCALE_IP only) ───────────► evolution:8080 │
    │                                                       │           │
    │  ════════════════ baja-edge (external network) ═══════╪═════════  │
@@ -50,11 +50,11 @@ Copy-paste runbook. You run every command yourself, as root on the VPS
 | Thing | Value |
 | --- | --- |
 | Shared Docker network | `baja-edge`, external, created by `setup.sh`, subnet **`10.201.0.0/24`, fixed** (§2.3). All three stacks depend on it |
-| Caddy container | `caddy`. Publishes host 80, 443, 443/udp; `TAILSCALE_IP:8080` and `TAILSCALE_IP:8081` |
+| Caddy container | `caddy`. Publishes host 80, 443, 443/udp and `TAILSCALE_IP:8081`. `TAILSCALE_IP:8080` belongs to the pipeline stack's own Caddy |
 | Site files | `/srv/caddy/conf.d/*.caddy`, one per stack |
 | Evolution | service `evolution`, port 8080, on `baja-edge` (not published) |
 | Scoring staging nginx | `baja-nginx:80` on `baja-edge` |
-| Tailnet ports | 8080 = pipeline worker API, 8081 = Evolution API/Manager |
+| Tailnet ports | 8081 = Evolution API/Manager (this stack); 8080 = pipeline worker API (published by the pipeline stack, only while it is up) |
 | Checkout | `/opt/baja-vps` (the systemd unit points there) |
 
 ## Key decisions
@@ -143,7 +143,8 @@ systemctl restart systemd-journald
 ### 1.4 Firewall
 
 Docker-published ports bypass ufw. That's acceptable because only Caddy
-publishes (80/443 public; 8080/8081 on the Tailscale IP only). Close
+publishes (80/443 public; 8081 on the Tailscale IP only; the pipeline
+stack adds 8080 on the Tailscale IP while it runs). Close
 everything else on the host:
 
 ```bash
